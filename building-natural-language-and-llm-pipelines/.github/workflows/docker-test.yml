@@ -1,0 +1,103 @@
+name: Docker Test
+
+on:
+  push:
+    branches: [ "main" ]
+    paths: 
+      - 'ch7/**'
+      - '.github/workflows/docker-test.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'ch7/**'
+      - '.github/workflows/docker-test.yml'
+
+jobs:
+  docker-test-ch7:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Free up disk space
+      run: |
+        docker system prune -af
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf "/usr/local/share/boost"
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        df -h
+        
+    - name: Create .env file for ch7
+      run: |
+        cd ch7
+        cat > .env << EOF
+        OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+        RAG_API_KEY=${{ secrets.RAG_API_KEY }}
+        QDRANT_PATH=./qdrant_storage
+        QDRANT_INDEX=documents
+        API_HOST=0.0.0.0
+        API_PORT=8000
+        EOF
+        
+    - name: Build ch7 Docker image
+      run: |
+        cd ch7
+        echo "Building ch7 Docker image..."
+        docker build -t hybrid-rag-api .
+        
+    - name: Test ch7 Docker container
+      run: |
+        cd ch7
+        echo "Testing ch7 Docker build and service startup..."
+        
+        # Run the container in detached mode
+        docker run -d --name test-ch7-api -p 8000:8000 -e OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" -e RAG_API_KEY="${{ secrets.RAG_API_KEY }}" hybrid-rag-api
+        
+        # Wait for container to initialize
+        echo "Waiting for container to initialize..."
+        sleep 30
+        
+        # Check if container is still running
+        if docker ps | grep -q "test-ch7-api"; then
+          echo "✅ ch7 API container started successfully!"
+          
+          # Give it more time for indexing to complete
+          sleep 60
+          
+          # Test health endpoint
+          timeout=120
+          counter=0
+          while [ $counter -lt $timeout ]; do
+            if curl -f http://localhost:8000/health > /dev/null 2>&1; then
+              echo "✅ ch7 API health endpoint is accessible!"
+              break
+            fi
+            echo "Waiting for ch7 API health endpoint... ($counter/$timeout)"
+            sleep 5
+            counter=$((counter + 5))
+          done
+          
+          if [ $counter -ge $timeout ]; then
+            echo "⚠️  ch7 API health endpoint not ready"
+            docker logs test-ch7-api
+          fi
+        else
+          echo "❌ ch7 API container failed to start"
+          docker logs test-ch7-api || true
+          exit 1
+        fi
+        
+    - name: Show ch7 logs on failure
+      if: failure()
+      run: |
+        echo "=== ch7 container logs ==="
+        docker logs test-ch7-api || true
+        
+    - name: Cleanup ch7
+      if: always()
+      run: |
+        docker stop test-ch7-api || true
+        docker rm test-ch7-api || true
+        docker system prune -f

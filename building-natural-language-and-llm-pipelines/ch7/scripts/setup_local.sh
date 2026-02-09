@@ -1,0 +1,57 @@
+#!/bin/bash
+# Setup script for local development
+
+set -euo pipefail
+
+echo "🚀 Setting up Hybrid RAG local development environment..."
+
+# Change to project root
+cd "$(dirname "$0")/.."
+
+# Check if .env exists
+if [[ ! -f .env ]]; then
+    echo "📝 Creating .env file from template..."
+    cp .env.example .env
+    echo "⚠️  Please edit .env file and add your OPENAI_API_KEY"
+else
+    echo "✅ .env file already exists"
+fi
+
+# Install dependencies using uv
+echo "📦 Installing dependencies with uv..."
+uv sync
+
+# Create Qdrant storage directory if it doesn't exist
+echo "📁 Setting up Qdrant storage..."
+if [[ ! -d "./qdrant_storage" ]]; then
+    mkdir -p ./qdrant_storage
+    echo "✅ Created Qdrant storage directory"
+else
+    echo "✅ Qdrant storage directory exists"
+fi
+
+# Test OpenAI API key
+echo "🔑 Testing OpenAI API key..."
+if uv run python -c "
+import os
+from dotenv import load_dotenv
+load_dotenv('.env')
+api_key = os.getenv('OPENAI_API_KEY')
+if not api_key or api_key == 'your_openai_api_key_here':
+    print('❌ OPENAI_API_KEY not set or using placeholder')
+    exit(1)
+else:
+    print('✅ OPENAI_API_KEY found')
+"; then
+    echo "✅ OpenAI API key configured"
+else
+    echo "❌ OpenAI API key not configured"
+    echo "💡 Please set OPENAI_API_KEY in .env file"
+fi
+
+echo ""
+echo "🎉 Setup complete! Next steps:"
+echo "  1. Edit .env file and set your OPENAI_API_KEY"
+echo "  2. Run indexing: ./scripts/run_indexing.sh"
+echo "  3. Start API: ./scripts/run_api.sh"
+echo "  4. Test API: uv run python tests/test_api.py"
